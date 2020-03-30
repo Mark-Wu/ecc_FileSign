@@ -8,6 +8,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <netinet/in.h>
+#include <err.h>
+#include <getopt.h>
+#include "sign.h"
 
 #pragma pack(1)
 typedef struct {
@@ -23,6 +26,20 @@ typedef struct {
 } hw_header;
 #pragma pack()
 
+
+char *l_opt_arg;
+char* const short_options = "f:t:p:";
+
+struct option long_options[] =
+        {
+                {"from", 1, NULL, 'f'},
+                {"to",1, NULL, 't'},
+                {"pem", 1, NULL, 'p'},
+                {0, 0, 0, 0},
+        };
+
+
+
 hw_header* hw_header_init()
 {
     hw_header * hd = malloc(sizeof(hw_header));
@@ -35,13 +52,13 @@ hw_header* hw_header_init()
 
     return hd;
 }
+
 int hw_header_exit(hw_header * hd)
 {
     free(hd);
 
     return 0;
 }
-
 
 static unsigned long get_file_size(const char *filename)
 {
@@ -57,7 +74,6 @@ static unsigned long get_file_size(const char *filename)
     fclose(fp);
     return size;
 }
-
 
 static int sha256_file(const char *fname, unsigned char *hash,int32_t *hash_len)
 {
@@ -112,7 +128,6 @@ static int sha256_file(const char *fname, unsigned char *hash,int32_t *hash_len)
     return 0;
 }
 
-
 static int sha256_header(hw_header *p,uint8_t *hash, uint32_t *hash_len)
 {
 
@@ -145,10 +160,6 @@ static int sha256_header(hw_header *p,uint8_t *hash, uint32_t *hash_len)
 
 
 }
-
-
-
-
 
 static int create_signature(unsigned char* hash,uint8_t* pubkey,uint8_t* sig, int* sig_len)
 {
@@ -192,7 +203,7 @@ static int create_signature(unsigned char* hash,uint8_t* pubkey,uint8_t* sig, in
             printf("public  key:%s\n",EC_POINT_point2hex(ecgroup,pubkey,POINT_CONVERSION_UNCOMPRESSED,bignum_ctx));
             BN_CTX_free(bignum_ctx);
 
-            ECDSA_SIG *signature = ECDSA_do_sign(hash, strlen(hash), eckey);
+            ECDSA_SIG *signature = ECDSA_do_sign(hash, 32, eckey);
             if (NULL == signature){
                 printf("Failed to generate EC Signature\n");
                 function_status = -1;
@@ -224,7 +235,6 @@ static int create_signature(unsigned char* hash,uint8_t* pubkey,uint8_t* sig, in
 
     return function_status;
 }
-
 
 static int file_signed(const char *from,const char *to, uint8_t * signature,int32_t sig_len)
 {
@@ -395,6 +405,7 @@ static int new_signed_file(const char *from,const char *to,hw_header *p)
 
 int main( int argc , char * argv[] )
 {
+    int err = 0;
     uint8_t hash[32] = {0};
     int hash_len = 0;
     uint8_t pubkey[33] = {0};
@@ -403,9 +414,42 @@ int main( int argc , char * argv[] )
     uint8_t h_hash[32] = {0};
     int h_hash_len = 0;
 
-    const char *fd_from = argv[1];
-    const char *fd_to = argv[2];
-    const char *f_key = argv[3];
+    const char *fd_from = NULL;
+    const char *fd_to = NULL;
+    const char *fpem = NULL;
+    FILE  *f_key = NULL;
+
+
+    int c;
+    while((c = getopt_long(argc, argv, short_options, long_options, NULL)) != -1)
+    {
+        switch (c)
+        {
+            case 'f':
+                fd_from = optarg;
+                printf("file to be signing: %s.\n",fd_from);
+                break;
+            case 't':
+                fd_to = optarg;
+                printf("file signed : %s.\n",fd_to);
+                break;
+            case 'p':
+                fpem = optarg;
+                printf("Our love is %s.\n", fpem);
+                break;
+            default:
+                printf("This is default option.\n");
+                break;
+        }
+    }
+
+
+
+    f_key = fopen(fpem,"a+");
+    if(f_key == NULL){
+        warnx("open %s err\n",fpem);
+        return -1;
+    }
 
     hw_header * p= hw_header_init();
 
@@ -417,13 +461,15 @@ int main( int argc , char * argv[] )
 
     sha256_header(p,h_hash,&h_hash_len);
 
-    create_signature(h_hash,pubkey,p->signature,&signature_len);
-
-    // file_signed(fd_from,fd_to,signature,signature_len);
+    err = ec_create_signature(f_key,fpem,h_hash,p->signature,&signature_len);
+    if(err < 0)
+        goto cleanup;
 
     new_signed_file(fd_from,fd_to,p);
 
+    cleanup:
     hw_header_exit(p);
-
+    if(f_key != NULL)
+        fclose(f_key);
     return  0;
 }
