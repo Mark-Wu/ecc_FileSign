@@ -438,7 +438,8 @@ int main( int argc , char * argv[] )
                 printf("Our love is %s.\n", fpem);
                 break;
             default:
-                printf("This is default option.\n");
+                printf("help:\n\t");
+                printf("FileSign -f test.bin -t test_signed.bin -p key.pem \n");
                 break;
         }
     }
