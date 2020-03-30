@@ -461,7 +461,7 @@ int main( int argc , char * argv[] )
 
     sha256_header(p,h_hash,&h_hash_len);
 
-    err = ec_create_signature(f_key,fpem,h_hash,p->signature,&signature_len);
+    err = ec_create_signature(f_key,fpem,h_hash,0x01,p->signature,&signature_len); //asn1 dec encode
     if(err < 0)
         goto cleanup;
 

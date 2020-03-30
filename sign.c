@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <openssl/pem.h>
+#include <string.h>
 #include <err.h>
 #include "sign.h"
 
@@ -67,7 +68,7 @@ EVP_PKEY *ec_key_load(FILE *f, const char *fname)
     return pkey;
 }
 
-int ec_sign(EC_KEY *eckey,int curve,uint8_t *hash,uint8_t *sig, uint32_t *sig_len)
+int ec_sign(EC_KEY *eckey,int curve,uint8_t *hash,uint8_t format,uint8_t *sig, uint32_t *sig_len)
 {
     int err = 0;
     EC_GROUP *ecgroup= EC_GROUP_new_by_curve_name(curve);
@@ -89,16 +90,71 @@ int ec_sign(EC_KEY *eckey,int curve,uint8_t *hash,uint8_t *sig, uint32_t *sig_le
     const BIGNUM *big_r = ECDSA_SIG_get0_r(signature);
     const BIGNUM *big_s = ECDSA_SIG_get0_s(signature);
     printf("sig:(r)%s (s)%s\n",BN_bn2hex(big_r),BN_bn2hex(big_s));
-    BN_bn2bin(big_r,sig);
-    BN_bn2bin(big_s,sig + 32);
-    *sig_len = 64;
+
+    if(format){
+        uint8_t bin_r[32],bin_s[32];
+        BN_bn2bin(big_r,bin_r);
+        BN_bn2bin(big_s,bin_s);
+        ec_signature_to_asn1(bin_r,bin_s,sig,sig_len);
+
+    }else{
+        BN_bn2bin(big_r,sig);
+        BN_bn2bin(big_s,sig + 32);
+        *sig_len = 64;
+    }
+    printf("signature(%d):",*sig_len);
+    for (int i = 0; i < *sig_len; ++i) {
+        printf("%02x",sig[i]);
+    }
+    printf("\n");
 
     cleanup:
     return err;
 }
 
 
-int ec_create_signature(FILE* f_key,const uint8_t *fname,uint8_t *hash, uint8_t* sig, int* sig_len)
+int ec_signature_to_asn1(uint8_t *r ,uint8_t *s, uint8_t *asn1,int32_t *asn1_len)
+{
+    uint8_t len_r = 32,len_s = 32,total_len;
+    uint8_t r_prefix = 0,s_prefix = 0;
+    uint8_t *pos = asn1;
+
+    if(!r || !s || !asn1 || !asn1_len)
+        return -1;
+
+    if(r[0] >= 0x80){
+        r_prefix = 0x01;
+        len_r += 1;
+    }
+    if(s[0] >= 0x80){
+        s_prefix = 0x01;
+        len_s += 1;
+    }
+    total_len = len_s + len_r + 4;
+
+    *pos++ = 0x30; //type array
+    *pos++ = total_len; //total  length
+    *pos++ = 0x02;  // type int
+    *pos++ = len_r; // length
+    if(r_prefix)
+        *pos++ = 0x00;
+    memcpy(pos,r,32);
+    pos += 32;
+
+    *pos++ = 0x02;  // type int
+    *pos++ = len_s; // length
+    if(s_prefix)
+        *pos++ = 0x00;
+    memcpy(pos,s,32);
+    pos += 32;
+
+    *asn1_len = pos - asn1;
+
+    return 0;
+}
+
+
+int ec_create_signature(FILE* f_key,const uint8_t *fname,uint8_t *hash,uint8_t format, uint8_t* sig, int* sig_len)
 {
     int err = 0;
     EVP_PKEY *pkey = NULL;
@@ -116,7 +172,7 @@ int ec_create_signature(FILE* f_key,const uint8_t *fname,uint8_t *hash, uint8_t*
     }
     eckey = EVP_PKEY_get1_EC_KEY(pkey);
 
-    err = ec_sign(eckey, NID_secp256k1, hash, sig, sig_len);
+    err = ec_sign(eckey, NID_secp256k1, hash,format ,sig, sig_len);
 
     cleanup:
     if(eckey)
